@@ -30,9 +30,15 @@ object TimeUsage {
     val (columns, initDf) = read("/timeusage/atussum.csv")
     val (primaryNeedsColumns, workColumns, otherColumns) = classifiedColumns(columns)
     val summaryDf = timeUsageSummary(primaryNeedsColumns, workColumns, otherColumns, initDf)
-    //val finalDf = timeUsageGroupedSql(summaryDf)
-    val finalDf = timeUsageGrouped(summaryDf)
-    finalDf.show()
+    /*val finalDf = timeUsageGrouped(summaryDf)
+    finalDf.show()*/
+
+    //timeUsageGroupedSql(summaryDf).show()
+
+    val summaryTyped = timeUsageSummaryTyped(summaryDf)
+    val groupedTyped = timeUsageGroupedTyped(summaryTyped)
+
+    groupedTyped.show()
   }
 
   /** @return The read DataFrame along with its column names. */
@@ -217,7 +223,7 @@ object TimeUsage {
     */
   def timeUsageGroupedSqlQuery(viewName: String): String =
     s"""
-      |select first_value(working) as working, first_value(sex) as sex, first_value(age) as age, first_value(primaryNeeds) as primaryNeeds, avg(primaryNeeds), avg(work), avg(other)
+      |select first_value(age) as age, first_value(sex) as sex, first_value(working) as working, round(avg(primaryNeeds),1) as primaryNeeds, round(avg(work), 1) as work, round(avg(other), 1) as other
       |from $viewName
       |group by (age, sex, working)
       |order by (working, sex, age)
@@ -230,8 +236,13 @@ object TimeUsage {
     * Hint: you should use the `getAs` method of `Row` to look up columns and
     * cast them at the same time.
     */
-  def timeUsageSummaryTyped(timeUsageSummaryDf: DataFrame): Dataset[TimeUsageRow] =
-    ???
+  def timeUsageSummaryTyped(timeUsageSummaryDf: DataFrame): Dataset[TimeUsageRow] = {
+
+    import spark.implicits._
+
+    timeUsageSummaryDf.as[TimeUsageRow]
+
+  }
 
   /**
     * @return Same as `timeUsageGrouped`, but using the typed API when possible
@@ -246,7 +257,14 @@ object TimeUsage {
     */
   def timeUsageGroupedTyped(summed: Dataset[TimeUsageRow]): Dataset[TimeUsageRow] = {
     import org.apache.spark.sql.expressions.scalalang.typed
-    ???
+    import spark.implicits._
+
+    summed
+      .groupByKey(t ⇒ (t.age, t.sex, t.working))
+      .agg(avg($"primaryNeeds").as[Double], avg($"work").as[Double], avg($"other").as[Double])
+      .map{case ((age, sex, working), primaryNeeds, work, other) ⇒ TimeUsageRow(working, sex, age, BigDecimal(primaryNeeds).setScale(1, BigDecimal.RoundingMode.HALF_UP).doubleValue(), BigDecimal(work).setScale(1, BigDecimal.RoundingMode.HALF_UP).doubleValue(), BigDecimal(other).setScale(1, BigDecimal.RoundingMode.HALF_UP).doubleValue())}
+      .orderBy($"working", $"sex", $"age")
+
   }
 }
 
